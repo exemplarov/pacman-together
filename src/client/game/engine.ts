@@ -265,7 +265,7 @@ export class Engine {
     return (phases[this.phaseIndex] ?? phases[phases.length - 1]!).mode;
   }
 
-  /** Direction press from any player (ownership filtering arrives in feature 003). */
+  /** Direction press (ownership filtering happens in GameScreen via Session). */
   pressDirection(d: Direction): void {
     this.pac.desired = dirIndex(d);
   }

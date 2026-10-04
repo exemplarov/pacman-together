@@ -1,26 +1,22 @@
-/** Game screen: attract overlay, HUD, canvas, fixed-timestep loop, pause & game over. */
+/** Game screen: HUD, canvas, fixed-timestep loop, shared-control input, pause & game over. */
 import type { UIScreen } from "../ui/screen";
+import { navigate } from "../ui/nav";
 import { Engine } from "../game/engine";
 import { Renderer } from "../game/render";
 import { Sfx } from "../audio/sfx";
 import { el } from "../ui/dom";
-import type { Direction } from "../../shared/directions";
+import { DIRECTIONS, type Direction } from "../../shared/directions";
+import type { InputSystem, InputEvent } from "../input/devices";
+import type { Session } from "../input/session";
+import { LobbyScreen } from "./lobby";
 
 const HI_SCORE_KEY = "pacman-together.hiscore";
 
-const KEY_DIRS: Record<string, Direction> = {
-  ArrowUp: "up",
-  ArrowLeft: "left",
-  ArrowDown: "down",
-  ArrowRight: "right",
-  w: "up",
-  a: "left",
-  s: "down",
-  d: "right",
-  W: "up",
-  A: "left",
-  S: "down",
-  D: "right",
+const DIR_GLYPH: Record<Direction, string> = {
+  up: "▲",
+  left: "◀",
+  down: "▼",
+  right: "▶",
 };
 
 function loadHiScore(): number {
@@ -35,23 +31,30 @@ export class GameScreen implements UIScreen {
   private raf = 0;
   private lastTime = 0;
   private accumulator = 0;
-  private phase: "attract" | "run" = "attract";
   private persistedHi = loadHiScore();
+  private disconnectPaused = false;
   private onKey = (ev: KeyboardEvent): void => this.handleKey(ev);
   private overlay?: HTMLElement;
   private overlayContent?: HTMLElement;
   private overlayToast?: HTMLElement;
+  private hudScore?: HTMLElement;
+  private hudHi?: HTMLElement;
+  private hudLevel?: HTMLElement;
+  private hudLives?: HTMLElement;
+  private strip?: HTMLElement;
+
+  constructor(
+    private session: Session,
+    private input: InputSystem,
+  ) {}
 
   mount(root: HTMLElement): void {
     const wrap = el("div", "screen game-screen");
     const hud = el("div", "hud");
-    const hudScore = el("span", "hud-item", "SCORE\n0");
-    const hudHi = el("span", "hud-item hud-hi", "HIGH SCORE\n0");
-    const hudLevel = el("span", "hud-item", "LEVEL\n1");
-    hud.append(hudScore, hudHi, hudLevel);
-    this.hudScore = hudScore;
-    this.hudHi = hudHi;
-    this.hudLevel = hudLevel;
+    this.hudScore = el("span", "hud-item", "SCORE\n0");
+    this.hudHi = el("span", "hud-item hud-hi", "HIGH SCORE\n0");
+    this.hudLevel = el("span", "hud-item", "LEVEL\n1");
+    hud.append(this.hudScore, this.hudHi, this.hudLevel);
 
     const stage = el("div", "stage");
     stage.appendChild(this.renderer.canvas);
@@ -61,34 +64,32 @@ export class GameScreen implements UIScreen {
     this.overlay.append(this.overlayContent, this.overlayToast);
     stage.appendChild(this.overlay);
 
+    this.strip = el("div", "control-strip");
+    for (const p of this.session.players) {
+      this.strip.appendChild(this.playerChip(p));
+    }
+    this.strip.appendChild(this.freedChip());
+
     const bottom = el("div", "hud hud-bottom");
     this.hudLives = el("span", "hud-item", "");
-    const hint = el(
-      "span",
-      "hud-item hud-hint",
-      "ARROWS/WASD steer · P pause · M mute",
-    );
+    const hint = el("span", "hud-item hud-hint", "P pause · M mute");
     bottom.append(this.hudLives, hint);
 
-    wrap.append(hud, stage, bottom);
+    wrap.append(hud, stage, this.strip, bottom);
     root.appendChild(wrap);
 
     window.addEventListener("keydown", this.onKey);
-    this.showAttract();
+    this.showReadyOverlay();
     this.lastTime = performance.now();
     this.loop(this.lastTime);
   }
-
-  private hudScore?: HTMLElement;
-  private hudHi?: HTMLElement;
-  private hudLevel?: HTMLElement;
-  private hudLives?: HTMLElement;
 
   unmount(): void {
     window.removeEventListener("keydown", this.onKey);
     cancelAnimationFrame(this.raf);
     this.sfx.siren(false);
     this.persistHiScore();
+    this.input.dispose();
   }
 
   private persistHiScore(): void {
@@ -99,90 +100,79 @@ export class GameScreen implements UIScreen {
   }
 
   private handleKey(ev: KeyboardEvent): void {
-    const dir = KEY_DIRS[ev.key];
-    if (dir) ev.preventDefault();
-
-    if (ev.key === "m" || ev.key === "M") {
+    if (ev.repeat) return;
+    if (ev.code === "KeyM") {
       const muted = this.sfx.toggleMute();
       this.toast(muted ? "muted" : "sound on");
       return;
     }
-
-    if (this.phase === "attract") {
-      if (dir) this.startRun();
+    if (ev.code === "KeyP") {
+      this.togglePause();
       return;
     }
-
     if (this.engine.state === "gameover") {
-      if (ev.key === "r" || ev.key === "R") this.startRun();
-      if (ev.key === "Escape") this.showAttract();
+      if (ev.code === "KeyR") this.startRun();
+      if (ev.code === "Escape") navigate(new LobbyScreen());
       return;
     }
-
-    if (ev.key === "p" || ev.key === "P") {
-      if (this.engine.state === "playing" || this.engine.paused) {
-        this.engine.paused = !this.engine.paused;
-        const fright = this.engine.frightTicks > 0;
-        this.sfx.siren(!this.engine.paused, fright);
-        this.toast(this.engine.paused ? "PAUSED" : "");
-      }
+    if (this.disconnectPaused && ev.code === "KeyQ") {
+      this.releaseDisconnected();
       return;
     }
+    if (ev.code === "Escape") navigate(new LobbyScreen());
+  }
 
-    if (dir) {
-      this.sfx.unlock();
-      this.engine.pressDirection(dir);
-    }
+  private togglePause(): void {
+    // only manual pause/unpause during actual play — never at the ready overlay
+    // or while a disconnect is being resolved (review 003 #3)
+    if (this.engine.state !== "playing" || this.disconnectPaused) return;
+    this.engine.paused = !this.engine.paused;
+    const fright = this.engine.frightTicks > 0;
+    this.sfx.siren(!this.engine.paused, fright);
+    this.toast(this.engine.paused ? "PAUSED" : "");
   }
 
   private startRun(): void {
     this.sfx.unlock();
+    this.disconnectPaused = false;
     this.engine.paused = false;
     this.engine.startRun();
     this.renderer.buildMazeLayer();
-    this.phase = "run";
     this.hideOverlay();
     this.toast("");
   }
 
-  private showAttract(): void {
-    this.phase = "attract";
+  private showReadyOverlay(): void {
     this.engine.startRun();
     this.engine.paused = true;
-    this.renderer.buildMazeLayer();
     if (!this.overlay || !this.overlayContent) return;
     this.overlay.classList.add("visible");
     this.overlayToast?.replaceChildren();
+    const names = this.session.players.map((p) => `P${p.slot + 1} ${p.label}`).join(" · ");
     this.overlayContent.innerHTML = `
-      <h1 class="logo">PACMAN<span class="together">TOGETHER</span></h1>
-      <div class="ghost-roster">
-        <span style="--c:#ff3b4e">● Blinky</span>
-        <span style="--c:#ff9ddb">● Pinky</span>
-        <span style="--c:#4de1ff">● Inky</span>
-        <span style="--c:#ffb14d">● Clyde</span>
-      </div>
-      <p class="subtitle">solo mode — you steer every direction<br />
-      multiplayer lobby arrives in the next feature</p>
-      <p class="press-start">PRESS ANY ARROW TO START</p>
-      <p class="subtitle dim">M mute · P pause</p>
+      <p class="ready-title">READY?</p>
+      <p class="subtitle">${names}</p>
+      <p class="subtitle">${this.session.players.length === 1 ? "you steer every direction" : "steer only the arrows you own"}</p>
+      <p class="press-start">PRESS ANY DIRECTION TO START</p>
+      <p class="subtitle dim">P pause · M mute</p>
     `;
   }
 
   private hideOverlay(): void {
     if (!this.overlay) return;
-    this.overlay.classList.remove("visible");
+    this.overlay.classList.remove("visible", "soft");
     this.overlayContent?.replaceChildren();
     this.overlayToast?.replaceChildren();
   }
 
   private toast(text: string): void {
     if (!this.overlayToast || !this.overlay) return;
+    this.overlayToast.replaceChildren();
     if (!text) {
-      if (this.phase !== "attract" && this.engine.state !== "gameover") {
-        this.overlay.classList.remove("visible", "soft");
-        this.overlayToast.replaceChildren();
+      if (this.overlayContent?.hasChildNodes()) {
+        this.overlay.classList.add("visible");
       } else {
-        this.overlayToast.replaceChildren();
+        this.overlay.classList.remove("visible", "soft");
       }
       return;
     }
@@ -190,23 +180,178 @@ export class GameScreen implements UIScreen {
     this.overlayToast.replaceChildren(el("p", "toast", text));
   }
 
+  private handleInputEvent(ev: InputEvent): void {
+    if (ev.kind === "disconnect") {
+      const player = this.session.markDisconnected(ev.device);
+      if (player) {
+        this.rebuildStrip();
+        if (!this.disconnectPaused) {
+          this.disconnectPaused = true;
+          this.engine.paused = true;
+          this.sfx.siren(false);
+        }
+        this.showDisconnectOverlay();
+      }
+      return;
+    }
+    if (ev.kind === "button") {
+      // B (1) on the game-over screen returns pad-only players to the lobby (#8)
+      if (ev.button === 1 && this.engine.state === "gameover") navigate(new LobbyScreen());
+      return;
+    }
+
+    // reconnect: any input from a disconnected player's device revives them (D14)
+    const owner = this.session.playerByDevice(ev.device);
+    if (owner?.disconnected) {
+      this.session.markReconnected(ev.device);
+      this.rebuildStrip();
+      if (!this.session.players.some((p) => p.disconnected)) {
+        this.disconnectPaused = false;
+        this.engine.paused = false;
+        this.hideOverlay();
+        // fresh READY beat rather than unfreezing mid-tick
+        this.engine.resetPositions();
+        this.engine.state = "ready";
+        this.engine.stateTicks = 0;
+      } else {
+        this.showDisconnectOverlay();
+      }
+      return;
+    }
+
+    // gamepad players can restart from GAME OVER with Start/A (#8)
+    if (this.engine.state === "gameover") {
+      if (ev.kind === "confirm") this.startRun();
+      return;
+    }
+
+    // start from the ready overlay
+    if (this.engine.paused && !this.disconnectPaused) {
+      this.startRun();
+    }
+
+    if (ev.kind === "confirm") return;
+    if (ev.kind !== "dir") return;
+
+    if (this.engine.state !== "playing" && this.engine.state !== "ready") return;
+
+    const player = this.session.playerByDevice(ev.device);
+    if (this.session.canSteer(ev.device, ev.dir)) {
+      this.sfx.unlock();
+      this.engine.pressDirection(ev.dir);
+      if (player) this.pulse(player.slot, ev.dir);
+      else this.pulseFree(ev.dir); // steering a freed direction (#17)
+    } else if (player) {
+      this.deny(player.slot);
+    }
+  }
+
+  private showDisconnectOverlay(): void {
+    if (!this.overlay || !this.overlayContent) return;
+    const gone = this.session.players.filter((p) => p.disconnected);
+    if (gone.length === 0) return;
+    this.overlay.classList.add("visible");
+    this.overlay.classList.remove("soft");
+    this.overlayToast?.replaceChildren();
+    const names = gone
+      .map((p) => `<span style="color:var(--player-${p.slot + 1})">P${p.slot + 1} ${p.label}</span>`)
+      .join("<br />");
+    this.overlayContent.innerHTML = `
+      <p class="gameover-title">CONTROLLER LOST</p>
+      <p class="subtitle">${names}</p>
+      <p class="subtitle">reconnect and press anything to resume</p>
+      <p class="subtitle dim">or press Q to release their directions to everyone</p>
+    `;
+  }
+
+  private releaseDisconnected(): void {
+    for (const p of this.session.players) {
+      if (p.disconnected) this.session.releasePlayerDirections(p);
+    }
+    this.disconnectPaused = false;
+    this.engine.paused = false;
+    this.hideOverlay();
+    this.rebuildStrip();
+  }
+
+  private rebuildStrip(): void {
+    if (!this.strip) return;
+    this.strip.replaceChildren();
+    for (const p of this.session.players) {
+      this.strip.appendChild(this.playerChip(p));
+    }
+    this.strip.appendChild(this.freedChip());
+  }
+
+  private playerChip(p: (typeof this.session.players)[number]): HTMLElement {
+    const chip = el("div", `strip-chip ${p.disconnected ? "gone" : ""}`);
+    chip.dataset.slot = String(p.slot);
+    chip.style.setProperty("--pc", p.color);
+    chip.innerHTML = `
+      <span class="chip-name">P${p.slot + 1}</span>
+      <span class="chip-dirs">${DIRECTIONS.map(
+        (d) =>
+          `<span class="dir-pip ${p.directions.has(d) ? "own" : ""}" data-dir="${d}">${DIR_GLYPH[d]}</span>`,
+      ).join("")}</span>`;
+    return chip;
+  }
+
+  private freedChip(): HTMLElement {
+    const chip = el("div", "strip-chip freed");
+    const freed = this.session.freeDirections;
+    chip.innerHTML = `<span class="chip-name">FREE</span>
+      <span class="chip-dirs">${DIRECTIONS.map((d) =>
+        freed.has(d)
+          ? `<span class="dir-pip own" data-dir="${d}">${DIR_GLYPH[d]}</span>`
+          : "",
+      ).join("")}</span>`;
+    return chip;
+  }
+
+  private pulse(slot: number, dir: Direction): void {
+    const chip = slot >= 0 ? this.strip?.querySelector<HTMLElement>(`.strip-chip[data-slot="${slot}"]`) : null;
+    const pip = chip?.querySelector<HTMLElement>(`.dir-pip[data-dir="${dir}"]`);
+    if (!pip) return;
+    pip.classList.remove("pulse");
+    void pip.offsetWidth; // restart animation
+    pip.classList.add("pulse");
+  }
+
+  private pulseFree(dir: Direction): void {
+    const pip = this.strip?.querySelector<HTMLElement>(
+      `.strip-chip.freed .dir-pip[data-dir="${dir}"]`,
+    );
+    if (!pip) return;
+    pip.classList.remove("pulse");
+    void pip.offsetWidth;
+    pip.classList.add("pulse");
+  }
+
+  private deny(slot: number): void {
+    const chip = this.strip?.querySelector<HTMLElement>(`.strip-chip[data-slot="${slot}"]`);
+    if (!chip) return;
+    chip.classList.remove("deny");
+    void chip.offsetWidth;
+    chip.classList.add("deny");
+  }
+
   private loop = (now: number): void => {
     this.raf = requestAnimationFrame(this.loop);
     const dt = Math.min(100, now - this.lastTime);
     this.lastTime = now;
     this.accumulator += dt;
+
+    for (const ev of this.input.poll()) this.handleInputEvent(ev);
+
     const stepMs = 1000 / 60;
     let steps = 0;
     while (this.accumulator >= stepMs && steps < 6) {
       const prevState = this.engine.state;
       this.engine.tick();
-      if (prevState !== this.engine.state) {
-        this.onStateChange(prevState, this.engine.state);
-      }
+      if (prevState !== this.engine.state) this.onStateChange(prevState, this.engine.state);
       this.accumulator -= stepMs;
       steps++;
     }
-    // drain engine events → audio
     for (const ev of this.engine.events) this.sfx.handleEvent(ev);
     this.engine.events.length = 0;
 
@@ -230,11 +375,7 @@ export class GameScreen implements UIScreen {
     if (this.hudHi) this.hudHi.textContent = `HIGH SCORE\n${e.hiScore}`;
     if (this.hudLevel) this.hudLevel.textContent = `LEVEL\n${e.level}`;
     if (this.hudLives) this.hudLives.textContent = "♥".repeat(Math.max(0, e.lives - 1));
-    if (
-      this.phase === "run" &&
-      e.state === "gameover" &&
-      !this.overlayContent?.hasChildNodes()
-    ) {
+    if (e.state === "gameover" && !this.overlayContent?.hasChildNodes()) {
       this.showGameOver();
     }
   }
@@ -246,7 +387,7 @@ export class GameScreen implements UIScreen {
     this.overlayContent.replaceChildren(
       el("p", "gameover-title", "GAME OVER"),
       el("p", "gameover-score", `SCORE ${this.engine.score}`),
-      el("p", "subtitle", "R restart · ESC menu"),
+      el("p", "subtitle", "R restart · ESC lobby"),
     );
   }
 }

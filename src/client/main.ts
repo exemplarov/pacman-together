@@ -1,8 +1,8 @@
 import { initNavigation } from "./ui/nav";
-import { GameScreen } from "./screens/game";
+import { LobbyScreen } from "./screens/lobby";
 
 const root = document.getElementById("app");
 if (!root) throw new Error("#app root element missing");
 
 const screens = initNavigation(root);
-screens.show(new GameScreen());
+screens.show(new LobbyScreen());

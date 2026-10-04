@@ -1,6 +1,6 @@
 # 003 — Co-op Multiplayer: Lobby, Direction Claiming, Shared Control
 
-Status: **planned**
+Status: **implemented** (4-device browser playtest pending)
 
 ## Idea
 
@@ -59,22 +59,25 @@ score → leaderboard.
 
 ## Plan
 
-- [ ] `src/client/input/devices.ts` — device model: keyboard clusters + gamepads; per-frame
-      poll → unified `DirectionPress {playerId, direction}` + `AnyPress` for join/confirm;
-      edge detection (pressed-this-frame), d-pad + stick with deadzone.
-- [ ] `src/client/input/manager.ts` — join tracking (join order, device label, color),
-      connect/disconnect events, keyboard fallback for solo.
-- [ ] `src/client/screens/lobby.ts` — join UI (device cards, up to 4, hints per device
-      type), name field per player (004 persistence hooks in), start gate (host: Space or
-      pad Start).
-- [ ] `src/client/screens/pick.ts` — direction cross UI, claim/release/taken feedback,
-      countdown, auto-assign leftovers rule, summary state, launch.
-- [ ] `src/client/game/engine.ts` integration — input source filtered by ownership map;
-      last-press-wins buffer; control strip component under canvas; pause on disconnect.
-- [ ] Direction ownership persisted per game and passed to 004 for the score record.
-- [ ] Tests: auto-assign distribution (3 players → 2/1/1, fewest-first, join-order ties),
-      claim/release transitions, ownership filter logic.
-- [ ] Manual playtest checklist (below).
+- [x] `src/client/input/devices.ts` — InputSystem: keyboard clusters + gamepads, per-frame
+      poll → edge events (dir/confirm/button/disconnect), d-pad buttons 12–15 + left stick
+      (0.5 deadzone), keydown auto-repeat filtered, arrows/space scroll-prevented,
+      `dispose()` for listener cleanup.
+- [x] `src/client/input/session.ts` — Session: join (max 4, colors P1–P4), claim/release/
+      taken, open-claim leftovers auto-assign (fewest-first, join-order tiebreak),
+      solo-all, canSteer ownership filter, disconnect/reconnect/release-to-free (D14).
+- [x] `src/client/screens/lobby.ts` — join UI (4 slots + hints per device type), pick
+      cross (claim/release/taken feedback), 20s countdown once everyone has ≥1, instant
+      finish when all 4 claimed, auto-assign, summary screen, launch.
+- [x] `src/client/game/engine.ts` integration — ownership-filtered `pressDirection`
+      (last press wins), control strip with pulse-on-press and deny flicker, disconnect
+      auto-pause overlay with Q-release, ready overlay with team lineup.
+- [x] Direction ownership passed to the game record for 004 (session persisted in
+      GameScreen; submission lands with 004).
+- [x] Tests: join limits/colors, claim/release/taken, auto-assign 2/1/1 + staggered
+      counts + free-set interaction, canSteer incl. freed & disconnected, soloAll.
+- [x] Manual playtest checklist (below) — logic verified by tests; full 4-device
+      playtest pending browser session.
 
 ## Decisions (HITL)
 
@@ -85,6 +88,14 @@ score → leaderboard.
 | D13 | Last-press-wins steering buffer; presses filtered by ownership; no punishment for illegal presses | **accepted** (agent) | 2026-10-04 |
 | D14 | Auto-pause on gamepad disconnect mid-game; Q converts their directions to "free" (any keyboard cluster may steer them) | **accepted** (agent) | 2026-10-04 |
 | D15 | Player colors P1 red / P2 cyan / P3 violet / P4 green | **accepted** (agent) | 2026-10-04 |
+| D23 | Single `lobby.ts` screen with internal phases (lobby→pick→summary) instead of separate pick.ts — one rAF/input pipeline, less state hand-off | **accepted** (agent, implementation simplification) | 2026-10-04 |
+| D24 | Attract screen replaced by the lobby itself (game entry always through a Session, even solo) — removes dual input paths in GameScreen | **accepted** (agent) | 2026-10-04 |
+| D25 | InputSystem is created by the lobby and handed to GameScreen; GameScreen.unmount disposes it (window listener cleanup) | **accepted** (agent) | 2026-10-04 |
+| D26 | Claim cap: while any player has 0 directions, others may not claim a 2nd (prevents all-4-grab deadlock; new `blocked` result with hint) | **accepted** (review 003 #9) | 2026-10-04 |
+| D27 | Reconnect = any input on the disconnected device → revive + fresh READY beat; Q releases *all* disconnected players' directions; overlay lists every disconnected player | **accepted** (review 003 #1/#10) | 2026-10-04 |
+| D28 | Keyboard hardening: `ev.repeat` filtered in screen handlers, preventDefault on repeats, `blur` clears held keys (alt-tab safe) | **accepted** (review 003 #4/#5/#6) | 2026-10-04 |
+| D29 | Pad-first-press join: edges emitted for buttons already down on first sight; non-standard-mapped pads ignore d-pad indices (stick only) | **accepted** (review 003 #7/#16) | 2026-10-04 |
+| D30 | Follow-ups logged: lobby phase machine not extracted for unit tests (DOM-coupled); countdown not reset when a player joins mid-pick; Escape no-op in pick | **accepted** (agent, deferred) | 2026-10-04 |
 
 ## Manual playtest checklist
 
