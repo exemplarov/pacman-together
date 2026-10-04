@@ -6,6 +6,11 @@ import { DIRECTIONS, type Direction } from "../../shared/directions";
 import { InputSystem, deviceLabel, type InputEvent } from "../input/devices";
 import { Session, type Player } from "../input/session";
 import { GameScreen } from "./game";
+import { LeaderboardScreen } from "./leaderboard";
+import { apiUpsertUser } from "../ui/api";
+import { escapeHtml } from "../ui/dom";
+
+const LAST_NAME_KEY = "pacman-together.lastname";
 
 const DIR_GLYPH: Record<Direction, string> = {
   up: "▲",
@@ -23,6 +28,7 @@ export class LobbyScreen implements UIScreen {
   private raf = 0;
   private deadline = 0; // pick countdown (ms timestamp), 0 = not running
   private launched = false; // guards double-launch within one frame (review 003 #2)
+  private handedOff = false; // input ownership transferred to GameScreen
   private hintTimer = 0;
   private root?: HTMLElement;
   private pickHint?: HTMLElement;
@@ -40,10 +46,19 @@ export class LobbyScreen implements UIScreen {
     window.removeEventListener("keydown", this.onKey);
     cancelAnimationFrame(this.raf);
     if (this.hintTimer) clearTimeout(this.hintTimer);
+    // the game screen takes over the input system on launch — only dispose when
+    // we are dying without a hand-off (e.g. navigating to the leaderboard)
+    if (!this.handedOff) this.input.dispose();
   }
 
   private handleKey(ev: KeyboardEvent): void {
-    if (ev.repeat) return; // held Space must not rocket through the phases (review 003 #4)
+    if (ev.repeat) return;
+    const target = ev.target as HTMLElement | null;
+    if (target?.tagName === "INPUT") return; // typing a name
+    if (ev.code === "KeyB") {
+      navigate(new LeaderboardScreen());
+      return;
+    }
     if (ev.code !== "Enter" && ev.code !== "Space") return;
     ev.preventDefault();
     if (this.phase === "lobby" && this.session.players.length >= 1) {
@@ -51,7 +66,7 @@ export class LobbyScreen implements UIScreen {
     } else if (this.phase === "pick") {
       if (this.session.allPlayersHaveDirections()) this.finishPick();
     } else if (this.phase === "summary") {
-      this.launch();
+      void this.launch();
     }
   }
 
@@ -147,6 +162,44 @@ export class LobbyScreen implements UIScreen {
   private launch(): void {
     if (this.launched) return;
     this.launched = true;
+    void this.launchFlow();
+  }
+
+  /** Persist names (best effort) then hand the session to the game screen. */
+  private async launchFlow(): Promise<void> {
+    const inputs = this.root?.querySelectorAll<HTMLInputElement>(".name-input");
+    if (inputs) {
+      for (const input of inputs) {
+        const slot = Number(input.dataset.slot);
+        const player = this.session.players[slot];
+        if (!player) continue;
+        const name = input.value.trim() || `P${slot + 1}`;
+        player.name = name;
+        if (slot === 0) localStorage.setItem(LAST_NAME_KEY, name);
+      }
+    }
+    // duplicate names (case-insensitive) would upsert to the same user id and
+    // the server rejects duplicate players in one game — auto-suffix instead
+    const seen = new Set<string>();
+    for (const p of this.session.players) {
+      let name = p.name;
+      let n = 2;
+      while (seen.has(name.toLowerCase())) {
+        name = `${p.name}-${n++}`;
+      }
+      p.name = name;
+      seen.add(name.toLowerCase());
+    }
+    await Promise.all(
+      this.session.players.map(async (p) => {
+        const user = await apiUpsertUser(p.name);
+        if (user) {
+          p.userId = user.id;
+          p.name = user.name;
+        }
+      }),
+    );
+    this.handedOff = true;
     navigate(new GameScreen(this.session, this.input));
   }
 
@@ -168,8 +221,11 @@ export class LobbyScreen implements UIScreen {
       <div class="join-hint">PRESS ANY KEY ON YOUR DEVICE TO JOIN</div>
       <div class="slots"></div>
       <p class="subtitle dim">keyboard clusters: ARROWS · WASD · IJKL · NUMPAD 8456 — or press any gamepad button</p>
-      <div class="start-hint ${this.session.players.length ? "" : "off"}">
-        ${this.session.players.length ? "SPACE / START — CONTINUE" : "waiting for players…"}
+      <div class="lobby-actions">
+        <button class="neon-button" data-action="board">LEADERBOARD (B)</button>
+        <span class="start-hint ${this.session.players.length ? "" : "off"}">
+          ${this.session.players.length ? "SPACE / START — CONTINUE" : "waiting for players…"}
+        </span>
       </div>
     `;
     const slots = wrap.querySelector<HTMLElement>(".slots")!;
@@ -178,6 +234,9 @@ export class LobbyScreen implements UIScreen {
       if (player) slots.appendChild(this.slotCard(player));
       else slots.appendChild(this.slotCard(undefined));
     }
+    wrap
+      .querySelector<HTMLButtonElement>('[data-action="board"]')!
+      .addEventListener("click", () => navigate(new LeaderboardScreen()));
     this.root?.appendChild(wrap);
   }
 
@@ -188,14 +247,34 @@ export class LobbyScreen implements UIScreen {
       return card;
     }
     card.style.setProperty("--pc", player.color);
+    const nameField =
+      this.phase === "lobby"
+        ? `<input class="name-input" data-slot="${player.slot}" maxlength="16"
+             value="${player.slot === 0 ? escapeHtml(localStorage.getItem(LAST_NAME_KEY) ?? "") : escapeHtml(player.name)}"
+             placeholder="P${player.slot + 1}" />`
+        : `<div class="slot-name">${escapeHtml(player.name)}</div>`;
     card.innerHTML = `
       <div class="slot-p">P${player.slot + 1}</div>
       <div class="slot-label">${player.label}</div>
+      ${nameField}
       <div class="slot-dirs">${DIRECTIONS.map(
         (d) =>
           `<span data-dir="${d}" class="dir-pip ${player.directions.has(d) ? "own" : ""}">${DIR_GLYPH[d]}</span>`,
       ).join("")}</div>
     `;
+    // capture names live — later phase re-renders destroy the inputs (review 004 #2)
+    const input = card.querySelector<HTMLInputElement>(".name-input");
+    if (input) {
+      input.addEventListener("input", () => {
+        player.name = input.value.trim() || `P${player.slot + 1}`;
+      });
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+        }
+      });
+    }
     return card;
   }
 

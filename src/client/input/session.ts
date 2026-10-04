@@ -12,6 +12,8 @@ export interface Player {
   label: string;
   directions: Set<Direction>;
   disconnected: boolean;
+  name: string; // display name (upserted to the server on launch — 004)
+  userId?: number; // server identity once upserted
 }
 
 export class Session {
@@ -29,6 +31,7 @@ export class Session {
       label,
       directions: new Set(),
       disconnected: false,
+      name: `P${this.players.length + 1}`,
     };
     this.players.push(player);
     return player;

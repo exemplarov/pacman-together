@@ -1,6 +1,6 @@
 # 004 — Persistent Users & Team Leaderboard (SQLite)
 
-Status: **planned**
+Status: **implemented** (browser run pending)
 
 ## Idea
 
@@ -80,16 +80,22 @@ screen. Profile widget in lobby after name confirm (best score line).
 
 ## Plan
 
-- [ ] `src/server/db.ts` — open DB (path env `DB_PATH` default `data/pacman.db`), WAL,
-      migrations (schema above), seed nothing.
-- [ ] `src/server/api/users.ts` — upsert + profile handlers with validation.
-- [ ] `src/server/api/games.ts` — submit game (transaction) + leaderboard handler.
-- [ ] `src/shared/api.ts` — request/response types shared with client fetch calls.
-- [ ] Client: name confirm in lobby (calls POST /api/users, stores id in session, prefill
-      localStorage for slot 1), game-over → POST /api/games → show rank, leaderboard screen.
-- [ ] Tests: upsert idempotence (same name, different case), validation failures (400),
-      leaderboard ordering + rank math, transaction rollback on bad player row.
-- [ ] Manual checklist below.
+- [x] `src/server/db.ts` — openDb (env `DB_PATH`, default `data/pacman.db`), WAL, FKs on,
+      migrations; `initDb` reusable for `:memory:` tests.
+- [x] `src/server/api/users.ts` — validateName, upsertUser (NOCASE), getUserProfile
+      (games/best/total), POST/GET handlers.
+- [x] `src/server/api/games.ts` — submitGame (full validation, transaction, insert-time
+      rank via score DESC + id ASC), getLeaderboard (limit 1-50, players joined).
+- [x] `src/shared/api.ts` — request/response contract types (+ HealthResponse).
+- [x] Client: name inputs in lobby (typing-safe input handling in InputSystem),
+      localStorage last-name prefill for slot 1, upsert-on-launch, game-over submission
+      with rank line / offline fallback, LeaderboardScreen (15 entries, medals,
+      dir glyphs, date), L key + button entries.
+- [x] Tests: validateName, upsert idempotence (case), submit validation (score/level/
+      duration/players/directions/dupes/unknown user), rank math (insert-time + final
+      order), leaderboard assembly & limit, profile aggregation. End-to-end API verified
+      manually against a live server (see commit notes).
+- [x] Manual checklist below — server parts verified; client flow pending browser run.
 
 ## Decisions (HITL)
 
@@ -99,6 +105,13 @@ screen. Profile widget in lobby after name confirm (best score line).
 | D16 | Identity = name upsert, no auth; localStorage prefill convenience only | **accepted** (agent; documented limitation) | 2026-10-04 |
 | D17 | Rank = team_score DESC, created_at ASC; top-10 default view | **accepted** (agent) | 2026-10-04 |
 | D18 | Game row written once at game over; level + duration + per-player directions stored | **accepted** (agent) | 2026-10-04 |
+| D31 | Leaderboard shortcut is **B** (not L — L is IJKL's RIGHT key and collides); board back-keys ESC/B/Enter/button | **accepted** (review 004 #1) | 2026-10-04 |
+| D32 | Names captured live via input listeners (phase re-renders destroy the fields); Enter blurs | **accepted** (review 004 #2) | 2026-10-04 |
+| D33 | Duplicate names (case-insensitive) auto-suffixed `-2`/`-3`… client-side before upsert (server rejects duplicate user in one game) | **accepted** (review 004 #3) | 2026-10-04 |
+| D34 | Score submission guarded by run-generation token (R-restart race); runTicks counts `playing` ticks only | **accepted** (review 004 #4/#5) | 2026-10-04 |
+| D35 | upsertUser uses `ON CONFLICT DO NOTHING` + reselect; submit maps only constraint errors to 400 (others rethrow → 500) | **accepted** (review 004 #6/#7) | 2026-10-04 |
+| D36 | InputSystem ownership: lobby disposes it on unmount unless handed off to GameScreen (`handedOff`) | **accepted** (review 004 #8) | 2026-10-04 |
+| D37 | Lobby profile widget (best-score line via GET /api/users/:id) deferred to a follow-up feature; endpoint stays | **accepted** (agent, review 004 #9) | 2026-10-04 |
 
 ## Manual playtest checklist
 

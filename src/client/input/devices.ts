@@ -70,6 +70,11 @@ export class InputSystem {
   constructor() {
     const onKeyDown = (ev: Event): void => {
       const e = ev as KeyboardEvent;
+      // typing in a name field must not steer pacman or swallow keys
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
       // stop arrows/space from scrolling the page (also on auto-repeat keydowns)
       if (
         e.code.startsWith("Arrow") ||

@@ -605,3 +605,152 @@ body::after {
   flex-direction: row;
   gap: 14px;
 }
+
+/* ── lobby extras ── */
+
+.name-input {
+  font-family: var(--font-arcade);
+  font-size: 9px;
+  color: var(--text);
+  background: rgba(5, 6, 15, 0.7);
+  border: 1px solid color-mix(in srgb, var(--pc) 40%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 110px;
+  text-align: center;
+  outline: none;
+}
+
+.name-input:focus {
+  border-color: var(--pc);
+  box-shadow: var(--glow-sm) color-mix(in srgb, var(--pc) 50%, transparent);
+}
+
+.slot-name {
+  font-size: 10px;
+  color: var(--text);
+}
+
+.lobby-actions {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: center;
+}
+
+.neon-button {
+  font-family: var(--font-arcade);
+  font-size: 9px;
+  color: var(--gold);
+  background: transparent;
+  border: 1px solid rgba(255, 215, 0, 0.5);
+  border-radius: 999px;
+  padding: 10px 18px;
+  cursor: pointer;
+  text-shadow: var(--glow-sm) rgba(255, 215, 0, 0.6);
+  box-shadow: var(--glow-sm) rgba(255, 215, 0, 0.25);
+}
+
+.neon-button:hover {
+  background: rgba(255, 215, 0, 0.08);
+}
+
+/* ── leaderboard ── */
+
+.board-screen {
+  gap: 24px;
+}
+
+.board-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 200px;
+  justify-content: center;
+}
+
+.board-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(760px, 94vw);
+}
+
+.board-row {
+  display: grid;
+  grid-template-columns: 46px 1fr 110px 48px 96px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(13, 17, 40, 0.6);
+  border: 1px solid rgba(90, 110, 255, 0.14);
+  font-size: 9px;
+}
+
+.board-row.head {
+  color: var(--text-dim);
+  border: none;
+  background: transparent;
+}
+
+.board-row.top {
+  border-color: rgba(255, 215, 0, 0.35);
+  box-shadow: var(--glow-sm) rgba(255, 215, 0, 0.15);
+}
+
+.board-rank {
+  text-align: center;
+  font-size: 11px;
+}
+
+.board-row.top .board-rank {
+  filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.5));
+}
+
+.board-players {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--text);
+}
+
+.board-player {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.board-dirs {
+  color: var(--text-dim);
+  font-size: 8px;
+}
+
+.board-sep {
+  color: var(--text-dim);
+}
+
+.board-score {
+  text-align: right;
+  color: var(--gold);
+  text-shadow: var(--glow-sm) rgba(255, 215, 0, 0.4);
+}
+
+.board-level {
+  text-align: center;
+  color: var(--text);
+}
+
+.board-date {
+  text-align: right;
+  color: var(--text-dim);
+}
+
+.rank-line {
+  font-size: 12px;
+  color: var(--gold);
+  text-shadow: var(--glow-md) rgba(255, 215, 0, 0.6);
+  margin: 0;
+}

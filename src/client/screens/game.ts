@@ -9,6 +9,9 @@ import { DIRECTIONS, type Direction } from "../../shared/directions";
 import type { InputSystem, InputEvent } from "../input/devices";
 import type { Session } from "../input/session";
 import { LobbyScreen } from "./lobby";
+import { LeaderboardScreen } from "./leaderboard";
+import { apiSubmitGame } from "../ui/api";
+import type { SubmitGameResponse } from "../../shared/api";
 
 const HI_SCORE_KEY = "pacman-together.hiscore";
 
@@ -33,6 +36,10 @@ export class GameScreen implements UIScreen {
   private accumulator = 0;
   private persistedHi = loadHiScore();
   private disconnectPaused = false;
+  private submitted = false;
+  private submitState: "saving" | "saved" | "offline" = "saving";
+  private lastRank?: SubmitGameResponse;
+  private runGeneration = 0; // invalidates stale score submissions after a restart
   private onKey = (ev: KeyboardEvent): void => this.handleKey(ev);
   private overlay?: HTMLElement;
   private overlayContent?: HTMLElement;
@@ -112,7 +119,8 @@ export class GameScreen implements UIScreen {
     }
     if (this.engine.state === "gameover") {
       if (ev.code === "KeyR") this.startRun();
-      if (ev.code === "Escape") navigate(new LobbyScreen());
+      else if (ev.code === "Escape") navigate(new LobbyScreen());
+      else if (ev.code === "KeyB") navigate(new LeaderboardScreen());
       return;
     }
     if (this.disconnectPaused && ev.code === "KeyQ") {
@@ -135,6 +143,9 @@ export class GameScreen implements UIScreen {
   private startRun(): void {
     this.sfx.unlock();
     this.disconnectPaused = false;
+    this.submitted = false;
+    this.submitState = "saving";
+    this.runGeneration++;
     this.engine.paused = false;
     this.engine.startRun();
     this.renderer.buildMazeLayer();
@@ -366,7 +377,43 @@ export class GameScreen implements UIScreen {
     if (to === "dying" || to === "levelclear" || to === "gameover") {
       this.sfx.siren(false);
     }
-    if (to === "gameover") this.persistHiScore();
+    if (to === "gameover") {
+      this.persistHiScore();
+      void this.submitScore();
+    }
+  }
+
+  /** Submit the team entry once per run (D4, D18); update the game-over overlay. */
+  private async submitScore(): Promise<void> {
+    if (this.submitted) return;
+    this.submitted = true;
+    this.submitState = "saving";
+    this.showGameOver();
+    const generation = this.runGeneration;
+
+    const players = this.session.players
+      .filter((p) => p.userId !== undefined)
+      .map((p) => ({ userId: p.userId!, directions: [...p.directions] }));
+    if (players.length === 0) {
+      this.submitState = "offline";
+      if (generation === this.runGeneration) this.showGameOver();
+      return;
+    }
+    const res = await apiSubmitGame({
+      teamScore: this.engine.score,
+      level: this.engine.level,
+      durationSec: Math.max(1, Math.round(this.engine.runTicks / 60)),
+      players,
+    });
+    // a restart while the fetch was in flight invalidates this result
+    if (generation !== this.runGeneration || this.engine.state !== "gameover") return;
+    if (res) {
+      this.submitState = "saved";
+      this.lastRank = res;
+    } else {
+      this.submitState = "offline";
+    }
+    this.showGameOver();
   }
 
   private updateHud(): void {
@@ -384,10 +431,18 @@ export class GameScreen implements UIScreen {
     if (!this.overlay || !this.overlayContent) return;
     this.overlay.classList.add("visible");
     this.overlay.classList.remove("soft");
-    this.overlayContent.replaceChildren(
-      el("p", "gameover-title", "GAME OVER"),
-      el("p", "gameover-score", `SCORE ${this.engine.score}`),
-      el("p", "subtitle", "R restart · ESC lobby"),
-    );
+    const status =
+      this.submitState === "saved" && this.lastRank
+        ? `<p class="rank-line">#${this.lastRank.rank} ON THE LEADERBOARD</p>`
+        : this.submitState === "saving"
+          ? `<p class="subtitle dim">saving…</p>`
+          : `<p class="subtitle dim">offline — score not saved</p>`;
+    this.overlayContent.replaceChildren();
+    this.overlayContent.innerHTML = `
+      <p class="gameover-title">GAME OVER</p>
+      <p class="gameover-score">SCORE ${this.engine.score}</p>
+      ${status}
+      <p class="subtitle">R restart · B leaderboard · ESC lobby</p>
+    `;
   }
 }

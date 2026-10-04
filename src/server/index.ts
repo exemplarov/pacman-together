@@ -1,5 +1,8 @@
 import { serve } from "bun";
 import { healthRoute } from "./api/health";
+import { postUserHandler, getUserHandler } from "./api/users";
+import { postGameHandler, getLeaderboardHandler } from "./api/games";
+import { openDb } from "./db";
 import index from "../client/index.html";
 
 const port = (() => {
@@ -7,9 +10,15 @@ const port = (() => {
   return Number.isInteger(p) && p > 0 && p < 65536 ? p : 3000;
 })();
 
+const db = openDb();
+
 export const routes = {
   "/": index,
   "/api/health": healthRoute,
+  "/api/users": { POST: postUserHandler(db) },
+  "/api/users/:id": { GET: getUserHandler(db) },
+  "/api/games": { POST: postGameHandler(db) },
+  "/api/leaderboard": { GET: getLeaderboardHandler(db) },
 } as const;
 
 const server = serve({

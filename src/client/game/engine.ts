@@ -182,6 +182,8 @@ export class Engine {
   freezeTicks = 0;
   phaseIndex = 0;
   phaseTicks = 0;
+  /** ticks since the run started (for the game record duration) */
+  runTicks = 0;
 
   constructor(hiScore = 0) {
     this.hiScore = hiScore;
@@ -202,6 +204,7 @@ export class Engine {
     this.fruit = null;
     this.events = [];
     this.popups = [];
+    this.runTicks = 0;
     this.resetPositions();
     this.state = "ready";
     this.stateTicks = 0;
@@ -272,6 +275,8 @@ export class Engine {
 
   tick(): void {
     if (this.paused) return;
+    // duration metric counts actual gameplay only (D18)
+    if (this.state === "playing") this.runTicks++;
     switch (this.state) {
       case "ready":
         if (++this.stateTicks >= READY_TICKS) {
