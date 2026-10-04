@@ -178,14 +178,23 @@ export class LobbyScreen implements UIScreen {
         if (slot === 0) localStorage.setItem(LAST_NAME_KEY, name);
       }
     }
+    // server names: printable ASCII, 1-16 chars — sanitize before upsert so a
+    // 4xx (invalid name) can never fire from normal input (review 005 #1)
+    const sanitize = (n: string): string =>
+      n
+        .replace(/[^\x20-\x7e]/g, "")
+        .slice(0, 16)
+        .trim();
     // duplicate names (case-insensitive) would upsert to the same user id and
     // the server rejects duplicate players in one game — auto-suffix instead
     const seen = new Set<string>();
     for (const p of this.session.players) {
-      let name = p.name;
+      let name = sanitize(p.name) || `P${p.slot + 1}`;
       let n = 2;
       while (seen.has(name.toLowerCase())) {
-        name = `${p.name}-${n++}`;
+        // keep the suffixed name within the 16-char limit
+        const base = name.slice(0, 13);
+        name = `${base}-${n++}`;
       }
       p.name = name;
       seen.add(name.toLowerCase());

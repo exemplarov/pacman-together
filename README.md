@@ -8,11 +8,31 @@ direction each; three = one player takes two; solo = all four.
 
 ```bash
 bun install
-bun run dev        # http://localhost:3000
+bun run dev        # http://localhost:3000  (fullstack: game + server leaderboard)
 ```
 
 - `bun test` — unit tests · `bun run start` — production server
 - SQLite data lives at `data/pacman.db` (auto-created; override with `DB_PATH`)
+
+## Distribute without a server
+
+```bash
+bun run build
+```
+
+- **`dist/`** — static site (index.html + hashed JS/CSS, relative paths): drop it on any
+  static host or CDN (Netlify, Vercel, Cloudflare Pages, GitHub Pages, an S3 bucket…).
+- **`dist-single/pacman-together.html`** — the entire game in one self-contained file
+  (~59 kB): double-click it, email it, host it anywhere. Plays offline (the arcade
+  font falls back to system monospace when the font CDN is unreachable).
+
+No backend? No problem — the app detects the missing server at boot and switches to
+**local mode**: identities and a per-browser leaderboard are kept in localStorage (the
+leaderboard screen shows a "this browser only" badge). The same build automatically uses
+the global server leaderboard whenever the API is present.
+
+A GitHub Actions workflow (`.github/workflows/pages.yml`) builds and publishes `dist/`
+to GitHub Pages on every push to `master`.
 
 ## How to play
 

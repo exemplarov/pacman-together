@@ -2,7 +2,7 @@
 import type { UIScreen } from "../ui/screen";
 import { navigate } from "../ui/nav";
 import { el, escapeHtml } from "../ui/dom";
-import { apiLeaderboard } from "../ui/api";
+import { apiLeaderboard, currentMode } from "../ui/api";
 import { LobbyScreen } from "./lobby";
 import type { LeaderboardEntry } from "../../shared/api";
 
@@ -33,21 +33,28 @@ export class LeaderboardScreen implements UIScreen {
     const wrap = el("div", "screen board-screen");
     wrap.innerHTML = `
       <h1 class="pick-title">LEADERBOARD</h1>
+      <div class="board-mode chip"><span class="dot"></span><span class="label">checking…</span></div>
       <div class="board-status">loading…</div>
       <button class="neon-button">BACK (ESC)</button>
     `;
     root.appendChild(wrap);
     const status = wrap.querySelector<HTMLElement>(".board-status")!;
+    const modeChip = wrap.querySelector<HTMLElement>(".board-mode")!;
+    const modeLabel = modeChip.querySelector<HTMLElement>(".label")!;
+    void currentMode().then((mode) => {
+      modeChip.dataset.state = "ok";
+      modeLabel.textContent = mode === "online" ? "server board" : "this browser only";
+    });
     wrap
       .querySelector<HTMLButtonElement>(".neon-button")!
       .addEventListener("click", () => navigate(new LobbyScreen()));
 
-    void apiLeaderboard(15).then((entries) => {
-      if (!entries) {
-        status.innerHTML = `<p class="subtitle">could not reach the server</p>`;
-        return;
-      }
-      if (entries.length === 0) {
+    void apiLeaderboard(15).then(async (entries) => {
+      // re-read the mode after the fetch — a server failure may have flipped it
+      const mode = await currentMode();
+      modeChip.dataset.state = "ok";
+      modeLabel.textContent = mode === "online" ? "server board" : "this browser only";
+      if (!entries || entries.length === 0) {
         status.innerHTML = `<p class="subtitle">no games yet — be the first team on the board!</p>`;
         return;
       }

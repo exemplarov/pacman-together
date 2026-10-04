@@ -10,7 +10,7 @@ import type { InputSystem, InputEvent } from "../input/devices";
 import type { Session } from "../input/session";
 import { LobbyScreen } from "./lobby";
 import { LeaderboardScreen } from "./leaderboard";
-import { apiSubmitGame } from "../ui/api";
+import { apiSubmitGame, type PlayerDisplay, type SubmitOutcome } from "../ui/api";
 import type { SubmitGameResponse } from "../../shared/api";
 
 const HI_SCORE_KEY = "pacman-together.hiscore";
@@ -38,6 +38,7 @@ export class GameScreen implements UIScreen {
   private disconnectPaused = false;
   private submitted = false;
   private submitState: "saving" | "saved" | "offline" = "saving";
+  private savedLocally = false;
   private lastRank?: SubmitGameResponse;
   private runGeneration = 0; // invalidates stale score submissions after a restart
   private onKey = (ev: KeyboardEvent): void => this.handleKey(ev);
@@ -399,16 +400,27 @@ export class GameScreen implements UIScreen {
       if (generation === this.runGeneration) this.showGameOver();
       return;
     }
-    const res = await apiSubmitGame({
-      teamScore: this.engine.score,
-      level: this.engine.level,
-      durationSec: Math.max(1, Math.round(this.engine.runTicks / 60)),
-      players,
-    });
+    let res: SubmitOutcome | null = null;
+    try {
+      res = await apiSubmitGame(
+        {
+          teamScore: this.engine.score,
+          level: this.engine.level,
+          durationSec: Math.max(1, Math.round(this.engine.runTicks / 60)),
+          players,
+        },
+        this.session.players.map(
+          (p): PlayerDisplay => ({ name: p.name, directions: [...p.directions] }),
+        ),
+      );
+    } catch {
+      // storage quota/blocked — report as not saved instead of hanging on "saving…"
+    }
     // a restart while the fetch was in flight invalidates this result
     if (generation !== this.runGeneration || this.engine.state !== "gameover") return;
     if (res) {
       this.submitState = "saved";
+      this.savedLocally = res.local;
       this.lastRank = res;
     } else {
       this.submitState = "offline";
@@ -433,10 +445,12 @@ export class GameScreen implements UIScreen {
     this.overlay.classList.remove("soft");
     const status =
       this.submitState === "saved" && this.lastRank
-        ? `<p class="rank-line">#${this.lastRank.rank} ON THE LEADERBOARD</p>`
+        ? this.savedLocally
+          ? `<p class="rank-line">#${this.lastRank.rank} — LOCAL LEADERBOARD</p>`
+          : `<p class="rank-line">#${this.lastRank.rank} ON THE LEADERBOARD</p>`
         : this.submitState === "saving"
           ? `<p class="subtitle dim">saving…</p>`
-          : `<p class="subtitle dim">offline — score not saved</p>`;
+          : `<p class="subtitle dim">not saved (offline or invalid)</p>`;
     this.overlayContent.replaceChildren();
     this.overlayContent.innerHTML = `
       <p class="gameover-title">GAME OVER</p>
