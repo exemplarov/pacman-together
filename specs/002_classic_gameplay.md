@@ -1,6 +1,6 @@
 # 002 — Classic Pacman Gameplay (Solo Core)
 
-Status: **planned**
+Status: **implemented** (browser playtest pending)
 
 ## Idea
 
@@ -92,26 +92,27 @@ tuning task.)
 
 ## Plan
 
-- [ ] `src/client/game/constants.ts` — speeds/fright/scatter/fruit tables, colors, sizes.
-- [ ] `src/client/game/maze.ts` — ASCII layout, parser, tile queries, dot/energizer counts,
+- [x] `src/client/game/constants.ts` — speeds/fright/scatter/fruit tables, colors, sizes.
+- [x] `src/client/game/maze.ts` — ASCII layout, parser, tile queries, dot/energizer counts,
       tunnel/red-zone/door/house geometry.
-- [ ] `src/client/game/actors.ts` — Actor base (pos, dir, speed, desired-dir buffer,
-      alignment, wall checks, tunnel wrap); Pacman (cornering, eat handling, death anim).
-- [ ] `src/client/game/ghosts.ts` — ghost struct, mode scheduler, per-ghost targeting,
-      decision-at-tile, frightened RNG, eyes return, house dwell/exit, Elroy, reversals.
-- [ ] `src/client/game/engine.ts` — state machine, fixed-step update, collisions
-      (pac×dot, pac×ghost w/ same-tile rule), score/lives/extra-life, fruit, level flow,
-      events emitted for UI/audio.
-- [ ] `src/client/game/render.ts` — offscreen maze layer w/ neon walls; actors, pellets
-      glow, fruit, popups, banners (READY!, GAME OVER), HUD (score/hi-score/level/lives).
-- [ ] `src/client/audio/sfx.ts` — WebAudio: chomp, energizer, siren loop (phases), eat-ghost,
-      death, fruit, extra-life, level-clear; master mute toggle (M).
-- [ ] `src/client/screens/game.ts` — canvas mount, rAF loop, attract overlay, pause (P),
-      keyboard arrows/WASD temporarily map to solo-all-directions (003 generalizes input).
-- [ ] Tests: maze counts (240/4, symmetric wrap rows), targeting math per ghost (fixed
-      scenarios), schedule transitions, scoring incl. chain & extra life, fruit spawn
-      triggers.
-- [ ] Manual playtest checklist in this spec (below) — verify against dossier feel.
+- [x] `src/client/game/actors.ts` — merged into `engine.ts` (Actor movement helpers +
+      Pacman cornering/eat/death anim) — see D20.
+- [x] `src/client/game/ghosts.ts` — ghost struct, per-ghost targeting, decision-at-center,
+      frightened RNG, red zones; house dwell/exit/eyes handled in engine state machine.
+- [x] `src/client/game/engine.ts` — state machine, fixed-step update, collisions, scoring,
+      lives/extra-life, fruit, level flow, events queue for UI/audio.
+- [x] `src/client/game/render.ts` — offscreen-free neon wall pass (double-stroke + glow),
+      actors, pellets glow, fruit, popups, banners, level hue shift; HUD in DOM.
+- [x] `src/client/audio/sfx.ts` — WebAudio: chomp, energizer, siren (normal/fright loops),
+      eat-ghost, death, fruit, extra-life, level-clear; M mute.
+- [x] `src/client/screens/game.ts` — canvas mount, rAF fixed-step loop, attract overlay,
+      pause (P), game over overlay, hi-score in localStorage.
+- [x] Tests: maze counts (244/4, tunnel wrap), targeting math per ghost incl. up-bug,
+      direction choice incl. red zones & forced reverse, movement/corridor eating,
+      energizer fright, ghost chain scoring, fruit spawn/eat, extra life, level clear,
+      house exit flow. Headless chaos sim (120s random input) passed manually.
+- [x] Manual playtest checklist in this spec (below) — items verified via sim/tests;
+      full visual pass pending browser playtest.
 
 ## Decisions (HITL)
 
@@ -120,8 +121,12 @@ tuning task.)
 | D1  | Neon arcade-modern visuals (release-level decision) | **accepted** (user) | 2026-10-04 |
 | D8  | Dossier-accurate ghost AI incl. Pinky/Inky up-bug replication | **accepted** (agent; authenticity ask) | 2026-10-04 |
 | D9  | House exits: simplified hybrid timer+dot thresholds (documented divergence) | **accepted** (agent; propose dossier-exact as future tuning) | 2026-10-04 |
+| D9a | D9 amended per review: dot thresholds scale linearly (`30−10k` / `60−15k`, k=level−1, min 0), Pinky = timer-only (dots sentinel ∞, 2s); at high levels ghosts exit on timers — acceptable | **accepted** (review finding 3/4) | 2026-10-04 |
+| D22 | Review nits consciously skipped: Clyde uses ≥8 (dossier wording), eat-freeze keeps eyes visible, eyes enter-house snap (no lerp), cornering tolerance 4px kept pending browser feel test | **accepted** (agent) | 2026-10-04 |
 | D10 | Fright determinism dropped (Math.random instead of arcade PRNG) | **accepted** (agent) | 2026-10-04 |
 | D11 | Fruit table full arcade list; despawn 9.5s | **accepted** (agent) | 2026-10-04 |
+| D20 | `actors.ts` merged into `engine.ts` (movement core + Pac in one module; ghosts stay separate) — reduced cross-module plumbing | **accepted** (review-driven simplification) | 2026-10-04 |
+| D21 | Wall rendering: per-tile edge segments stroked twice (soft glow + bright core), no offscreen layer (simpler, fast enough) | **accepted** (agent) | 2026-10-04 |
 
 ## Manual playtest checklist
 
